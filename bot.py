@@ -119,10 +119,10 @@ class SpellBot(commands.Bot):
     def __init__(self):
         super().__init__(
             token=OAUTH_TOKEN,
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
             prefix="!",
-            initial_channels=[CHANNEL]
+            initial_channels=[CHANNEL],
+            client_id=CLIENT_ID,
+            bot_id=None
         )
 
     async def event_ready(self):
@@ -144,12 +144,12 @@ class SpellBot(commands.Bot):
         await ctx.send(f"@{user}, your components: " + ", ".join(parts))
 
 # ---------------- Run Flask + Bot ----------------
-def run_flask():
-    app.run(host="0.0.0.0", port=5000)
-
 if __name__ == "__main__":
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
+    import threading
 
-    bot_instance = SpellBot()
-    bot_instance.run()
+    # Run Twitch bot in background thread
+    threading.Thread(target=lambda: asyncio.run(bot_instance.start())).start()
+
+    # Use Render’s assigned port
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
