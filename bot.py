@@ -103,6 +103,8 @@ class SpellBot(commands.Bot):
 
     async def event_ready(self):
         print(f"[Bot] Logged in as {self.user.name}")
+        # Start background task
+        asyncio.create_task(self.announce_loop())
         # Start the background task for announcing gains
         self.loop.create_task(self.announce_loop())
 
@@ -112,15 +114,13 @@ class SpellBot(commands.Bot):
         await self.handle_commands(message)
 
     async def announce_loop(self):
-        """Continuously announce component gains in order."""
-        await self.wait_for_ready()
         while True:
-            if gain_queue:
-                username, comp = gain_queue.popleft()
-                channel = self.connected_channels[0]
-                await channel.send(f"@{username} received a {comp.capitalize()} component!")
-                print(f"[Bot] Announced in chat: {username} -> {comp}")
-            await asyncio.sleep(1)  # prevent busy loop
+            while gain_queue:
+                username, component = gain_queue.popleft()
+                if self.connected_channels:
+                    channel = self.connected_channels[0]
+                    await channel.send(f"@{username} received a {component.capitalize()} component!")
+            await asyncio.sleep(1)  # small delay to prevent busy-waiting
 
     @commands.command()
     async def inventory(self, ctx):
