@@ -134,13 +134,12 @@ class SpellBot(commands.Bot):
 
 # ---------------- Run Flask + Bot ----------------
 if __name__ == "__main__":
-    import threading
-
     bot_instance = SpellBot()
 
-    # Run Twitch bot in background thread
-    threading.Thread(target=lambda: asyncio.run(bot_instance.start())).start()
-
-    # Use Render’s assigned port
+    # Run Flask in a background thread
+    import threading
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port)).start()
+
+    # Run bot in main thread
+    bot_instance.run()
