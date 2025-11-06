@@ -102,7 +102,7 @@ class SpellBot(commands.Bot):
         )
 
     async def event_ready(self):
-        print(f"[Bot] Logged in as {self.nick}")
+        print(f"[Bot] Logged in as {self.user.name}")
         # Start the background task for announcing gains
         self.loop.create_task(self.announce_loop())
 
