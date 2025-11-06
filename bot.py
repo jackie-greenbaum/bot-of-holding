@@ -13,7 +13,10 @@ CLIENT_ID = os.environ.get("CLIENT_ID")
 CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 BOT_ID = os.environ.get("BOT_ID")
 
-COMPONENT_TYPES = ["slow", "fast", "fire", "ice"]  # example component types
+COMPONENT_TYPES = ["slow"]  # example component types
+
+os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+
 
 # ------------- Inventory Management -------------
 data_lock = threading.Lock()
