@@ -147,6 +147,8 @@ class SpellBot(commands.Bot):
 if __name__ == "__main__":
     import threading
 
+    bot_instance = SpellBot()
+
     # Run Twitch bot in background thread
     threading.Thread(target=lambda: asyncio.run(bot_instance.start())).start()
 
