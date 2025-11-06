@@ -20,7 +20,6 @@ COMPONENT_TYPES = ["slow"]
 data_lock = threading.Lock()
 
 def ensure_datafile():
-    """Ensure inventory file exists."""
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, "w") as f:
@@ -88,31 +87,7 @@ def eventsub():
             gain_queue.append((username, component))
             print(f"[EventSub] {username} gained {component} component from: '{result_text}'")
 
-            # Announce in chat asynchronously
-            announce_gain(username, component)
-
     return "", 200
-
-
-def announce_gain(username, component):
-    """Send a message to Twitch chat when a reward is redeemed."""
-    message = f"@{username} received a {component.capitalize()} component!"
-
-    async def send_message():
-        if bot_instance and bot_instance.connected_channels:
-            channel = bot_instance.connected_channels[0]
-            await channel.send(message)
-            print(f"[Bot] Announced in chat: {message}")
-        else:
-            print("[Bot] No connected channels yet to send message")
-
-    try:
-        if bot_instance:
-            bot_instance.loop.create_task(send_message())
-        else:
-            print("[Bot] Bot not ready yet")
-    except Exception as e:
-        print(f"[Bot] Failed to schedule chat message: {e}")
 
 # ---------------- TwitchIO Bot ----------------
 class SpellBot(commands.Bot):
@@ -121,17 +96,28 @@ class SpellBot(commands.Bot):
             token=OAUTH_TOKEN,
             prefix="!",
             initial_channels=[CHANNEL],
-            client_id=CLIENT_ID,
-            bot_id=None
         )
 
     async def event_ready(self):
         print(f"[Bot] Logged in as {self.nick}")
+        # Start the background task for announcing gains
+        self.loop.create_task(self.announce_loop())
 
     async def event_message(self, message):
         if message.echo or message.author is None:
             return
         await self.handle_commands(message)
+
+    async def announce_loop(self):
+        """Continuously announce component gains in order."""
+        await self.wait_for_ready()
+        while True:
+            if gain_queue:
+                username, comp = gain_queue.popleft()
+                channel = self.connected_channels[0]
+                await channel.send(f"@{username} received a {comp.capitalize()} component!")
+                print(f"[Bot] Announced in chat: {username} -> {comp}")
+            await asyncio.sleep(1)  # prevent busy loop
 
     @commands.command()
     async def inventory(self, ctx):
