@@ -96,6 +96,9 @@ class SpellBot(commands.Bot):
             token=OAUTH_TOKEN,
             prefix="!",
             initial_channels=[CHANNEL],
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            bot_id=BOT_ID
         )
 
     async def event_ready(self):
