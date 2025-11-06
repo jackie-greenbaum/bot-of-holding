@@ -1,34 +1,39 @@
 #!/usr/bin/python3
-
-import json, os, hmac, hashlib, threading, random, asyncio
+import os, json, hmac, hashlib, threading, random, asyncio
 from flask import Flask, request
 from twitchio.ext import commands
+from collections import deque
 
 # ---------------- CONFIG ----------------
-OAUTH_TOKEN = os.environ.get("OAUTH_TOKEN")
-CHANNEL = os.environ.get("CHANNEL", "VahRuan")
-EVENTSUB_SECRET = os.environ.get("EVENTSUB_SECRET").encode()
-DATA_FILE = os.environ.get("DATA_FILE", "disk/inventory.json")
-CLIENT_ID = os.environ.get("CLIENT_ID")
-CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
-BOT_ID = os.environ.get("BOT_ID")
+OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # e.g. "oauth:xxxxxx"
+CHANNEL = os.getenv("CHANNEL", "VahRuan")
+EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET").encode()
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+BOT_ID = os.getenv("BOT_ID")
 
-COMPONENT_TYPES = ["slow"]  # example component types
+# Persistent file (Render free tier -> mounted under /disk)
+DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
+COMPONENT_TYPES = ["slow"]
 
-os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-
-
-# ------------- Inventory Management -------------
+# ---------------- Inventory Management ----------------
 data_lock = threading.Lock()
 
+def ensure_datafile():
+    """Ensure inventory file exists."""
+    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "w") as f:
+            json.dump({}, f)
+
 def load_data():
+    ensure_datafile()
     with data_lock:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
-        return {}
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
 
 def save_data(data):
+    ensure_datafile()
     with data_lock:
         with open(DATA_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -40,39 +45,26 @@ def add_component(username, component):
     data[username] = inv
     save_data(data)
 
-# ------------- Flask App -------------
+# ---------------- Flask App ----------------
 app = Flask(__name__)
-bot_instance = None  # Will be set after bot creation
-
-def announce_gain(username, component):
-    """Send a message to chat from any thread."""
-    if bot_instance is None:
-        return
-
-    channel = bot_instance.get_channel(CHANNEL)
-    if channel is None:
-        # Bot hasn't joined the channel yet
-        print(f"[announce_gain] Bot not ready to send message for {username}")
-        return
-
-    coro = channel.send(f"@{username} received a {component.capitalize()} component!")
-    asyncio.run_coroutine_threadsafe(coro, bot_instance.loop)
+gain_queue = deque()
+bot_instance = None  # Will be set later
 
 @app.route("/eventsub", methods=["POST"])
 def eventsub():
     print("=== EventSub request received ===")
-    print("Headers:", request.headers)
+    print("Headers:", dict(request.headers))
     print("Body:", request.data.decode())
 
     message_type = request.headers.get("Twitch-Eventsub-Message-Type")
     data = request.json
 
-    # Handle verification first
+    # Verification challenge
     if message_type == "webhook_callback_verification":
         print("[EventSub] Received verification challenge")
         return data["challenge"]
 
-    # HMAC verification for notifications
+    # HMAC verification
     msg_id = request.headers.get("Twitch-Eventsub-Message-Id")
     timestamp = request.headers.get("Twitch-Eventsub-Message-Timestamp")
     signature = request.headers.get("Twitch-Eventsub-Message-Signature")
@@ -87,34 +79,56 @@ def eventsub():
     if message_type == "notification":
         event = data["event"]
         username = event["user_name"].lower()
-        reward_title = event["reward"]["title"].lower()  # lowercase for comparison
+        reward_title = event["reward"]["title"].lower()
         result_text = (event.get("user_input") or "").lower().strip()
 
         if "daily spell component" in reward_title:
             component = random.choice(COMPONENT_TYPES)
             add_component(username, component)
-            announce_gain(username, component)
+            gain_queue.append((username, component))
             print(f"[EventSub] {username} gained {component} component from: '{result_text}'")
+
+            # Announce in chat asynchronously
+            announce_gain(username, component)
 
     return "", 200
 
-# ------------- TwitchIO Bot -------------
+
+def announce_gain(username, component):
+    """Send a message to Twitch chat when a reward is redeemed."""
+    message = f"@{username} received a {component.capitalize()} component!"
+
+    async def send_message():
+        if bot_instance and bot_instance.connected_channels:
+            channel = bot_instance.connected_channels[0]
+            await channel.send(message)
+            print(f"[Bot] Announced in chat: {message}")
+        else:
+            print("[Bot] No connected channels yet to send message")
+
+    try:
+        if bot_instance:
+            bot_instance.loop.create_task(send_message())
+        else:
+            print("[Bot] Bot not ready yet")
+    except Exception as e:
+        print(f"[Bot] Failed to schedule chat message: {e}")
+
+# ---------------- TwitchIO Bot ----------------
 class SpellBot(commands.Bot):
     def __init__(self):
         super().__init__(
+            token=OAUTH_TOKEN,
             client_id=CLIENT_ID,
             client_secret=CLIENT_SECRET,
-            bot_id=BOT_ID,
-            token=OAUTH_TOKEN,
             prefix="!",
             initial_channels=[CHANNEL]
         )
 
     async def event_ready(self):
-        print(f"[Bot] Logged in and ready!")
+        print(f"[Bot] Logged in as {self.nick}")
 
     async def event_message(self, message):
-        # Ignore echoes or system messages
         if message.echo or message.author is None:
             return
         await self.handle_commands(message)
@@ -129,13 +143,12 @@ class SpellBot(commands.Bot):
         parts = [f"{k.capitalize()} x{v}" for k, v in inv.items()]
         await ctx.send(f"@{user}, your components: " + ", ".join(parts))
 
-# ------------- Run Flask and Bot -------------
+# ---------------- Run Flask + Bot ----------------
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
     bot_instance = SpellBot()
