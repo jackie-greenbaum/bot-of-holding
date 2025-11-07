@@ -47,13 +47,6 @@ def add_component(username, component):
 app = Flask(__name__)
 bot_instance = None  # Will be set when bot starts
 
-def schedule_on_bot(coro_obj):
-    if bot_instance and hasattr(bot_instance, "_loop"):
-        loop = bot_instance._loop
-        loop.call_soon_threadsafe(lambda co=coro_obj: asyncio.create_task(co))
-    else:
-        print("[Bot] Cannot schedule message; bot not ready yet.")
-
 @app.route("/eventsub", methods=["POST"])
 def eventsub():
     """Handle Twitch EventSub notifications."""
@@ -91,16 +84,20 @@ def eventsub():
             component = "slow"
             add_component(username, component)
 
-            # Send message via bot
+            # Schedule sending via bot's queue
             async def send_message():
-                channel = bot_instance.get_channel(CHANNEL)
-                if channel:
-                    await channel.send(f"@{username} received a {component} component!")
-                else:
-                    print("[Bot] Channel not ready yet")
+                try:
+                    channel = bot_instance.get_channel(CHANNEL)
+                    if channel:
+                        await channel.send(f"@{username} received a {component} component!")
+                    else:
+                        print("[Bot] Channel not ready yet")
+                except Exception as e:
+                    print(f"[Bot] Error sending message: {e}")
 
-            # Schedule the coroutine correctly
-            schedule_on_bot(send_message())  # parentheses to get coroutine object
+            # Put coroutine function onto bot queue
+            if bot_instance:
+                bot_instance.message_queue.put_nowait(send_message)
 
     return "", 200
 
@@ -116,8 +113,22 @@ class SpellBot(commands.Bot):
             initial_channels=[CHANNEL],
         )
 
+        # Queue to receive coroutines from Flask thread
+        self.message_queue = asyncio.Queue()
+
     async def event_ready(self):
         print(f"[Bot] Logged in as {self.user.name} (ready!)")
+        # Start queue worker
+        asyncio.create_task(self.queue_worker())
+
+    async def queue_worker(self):
+        """Consume coroutines from the queue and run them on the bot's loop."""
+        while True:
+            coro_func = await self.message_queue.get()
+            try:
+                await coro_func()
+            except Exception as e:
+                print(f"[Bot] Error in queue worker: {e}")
 
     async def event_message(self, message):
         if message.echo or message.author is None:
