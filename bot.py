@@ -7,19 +7,17 @@ import random
 import asyncio
 from flask import Flask, request
 from twitchio.ext import commands
-from hypercorn.asyncio import serve
-from hypercorn.config import Config
 
 # ---------------- CONFIG ----------------
 OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # e.g. "oauth:xxxxxx"
 CHANNEL = os.getenv("CHANNEL", "VahRuan")
-EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET", "super_secret").encode()
+EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET").encode()
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 BOT_ID = os.getenv("BOT_ID")
 DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
 
-COMPONENT_TYPES = ["slow"]  # example types
+COMPONENT_TYPES = ["slow", "fast", "fire", "ice"]  # example types
 
 # ---------------- Inventory Management ----------------
 def ensure_datafile():
@@ -47,39 +45,46 @@ def add_component(username, component):
 
 # ---------------- Flask App ----------------
 app = Flask(__name__)
-bot_instance = None  # will be set in main()
+bot_instance = None  # Will be set when bot starts
 
 @app.route("/eventsub", methods=["POST"])
 async def eventsub():
     """Handle Twitch EventSub notifications."""
-    data = request.json
     headers = request.headers
+    body = request.get_data()
+    print(f"[EventSub] Raw body: {body.decode()}", flush=True)  # log entire payload
+    try:
+        data = request.json
+    except Exception as e:
+        print(f"[EventSub] Failed to parse JSON: {e}", flush=True)
+        return "Bad Request", 400
 
     message_type = headers.get("Twitch-Eventsub-Message-Type")
-    print(f"[EventSub] Received message type: {message_type}")
+    print(f"[EventSub] Message type: {message_type}", flush=True)
+    print(f"[EventSub] Headers: {dict(headers)}", flush=True)
 
     # Verification challenge
     if message_type == "webhook_callback_verification":
-        print("[EventSub] Responding to verification challenge")
+        print(f"[EventSub] Verification challenge: {data.get('challenge')}", flush=True)
         return data["challenge"]
 
     # HMAC verification
     msg_id = headers.get("Twitch-Eventsub-Message-Id")
     timestamp = headers.get("Twitch-Eventsub-Message-Timestamp")
     signature = headers.get("Twitch-Eventsub-Message-Signature")
-    body = request.get_data()
 
-    computed = "sha256=" + hmac.new(
-        EVENTSUB_SECRET,
-        (msg_id + timestamp + body.decode()).encode(),
-        hashlib.sha256
-    ).hexdigest()
+    if not all([msg_id, timestamp, signature, body]):
+        print("[EventSub] Missing headers or body for HMAC verification", flush=True)
+        return "Invalid", 400
 
+    computed = "sha256=" + hmac.new(EVENTSUB_SECRET, (msg_id + timestamp + body.decode()).encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, computed):
-        print("[EventSub] Invalid signature!")
+        print(f"[EventSub] HMAC verification failed. Computed: {computed}, Provided: {signature}", flush=True)
         return "Invalid", 403
 
     if message_type == "notification":
+        print(f"[EventSub] Notification payload: {json.dumps(data, indent=2)}", flush=True)  # full payload
+
         event = data["event"]
         username = event["user_name"].lower()
         reward_title = event["reward"]["title"].lower()
@@ -88,16 +93,11 @@ async def eventsub():
         if "daily spell component" in reward_title:
             component = random.choice(COMPONENT_TYPES)
             add_component(username, component)
-            print(f"[EventSub] {username} got a {component} component")
 
             # Announce in Twitch chat
             if bot_instance:
-                if bot_instance.connected_channels:
-                    await bot_instance.connected_channels[0].send(
-                        f"@{username} received a {component} component!"
-                    )
-                else:
-                    print("[Bot] No connected channels to send message")
+                await bot_instance.send_message(f"@{username} received a {component} component!")
+                print(f"[Bot] Sent message to Twitch chat for {username}", flush=True)
 
     return "", 200
 
@@ -114,7 +114,7 @@ class SpellBot(commands.Bot):
         )
 
     async def event_ready(self):
-        print(f"[Bot] Logged in as {self.user.name} (ready!)")
+        print(f"[Bot] Logged in as {self.user.name} (ready!)", flush=True)
 
     async def event_message(self, message):
         if message.echo or message.author is None:
@@ -131,22 +131,32 @@ class SpellBot(commands.Bot):
         parts = [f"{k.capitalize()} x{v}" for k, v in inv.items()]
         await ctx.send(f"@{user}, your components: " + ", ".join(parts))
 
+    async def send_message(self, message):
+        """Send a message to the first connected channel."""
+        if self.connected_channels:
+            await self.connected_channels[0].send(message)
+        else:
+            print("[Bot] No connected channels to send message", flush=True)
+
 # ---------------- Run ----------------
-async def main():
-    global bot_instance
+if __name__ == "__main__":
+    import hypercorn.asyncio
+    from hypercorn.config import Config
+
+    print("[Main] Starting bot...", flush=True)
+    print(f"[Main] OAUTH_TOKEN set? {'Yes' if OAUTH_TOKEN else 'No'}", flush=True)
+    print(f"[Main] CLIENT_ID set? {'Yes' if CLIENT_ID else 'No'}", flush=True)
+    print(f"[Main] CLIENT_SECRET set? {'Yes' if CLIENT_SECRET else 'No'}", flush=True)
+    print(f"[Main] BOT_ID set? {'Yes' if BOT_ID else 'No'}", flush=True)
+
     bot_instance = SpellBot()
 
-    # Start Twitch bot
-    bot_task = asyncio.create_task(bot_instance.start())
+    # Start Twitch bot in background
+    asyncio.get_event_loop().create_task(bot_instance.start())
 
-    # Start Hypercorn server
+    # Run Flask async app via Hypercorn
     port = int(os.environ.get("PORT", 5000))
     config = Config()
     config.bind = [f"0.0.0.0:{port}"]
-    server_task = asyncio.create_task(serve(app, config))
-
-    # Run both concurrently
-    await asyncio.gather(bot_task, server_task)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    config.loglevel = "debug"  # show HTTP request logs
+    asyncio.run(hypercorn.asyncio.serve(app, config))
