@@ -53,13 +53,18 @@ def eventsub():
     data = request.json
     headers = request.headers
 
+    # DEBUG: print full payload and headers
+    print("\n[EventSub] Headers:", dict(headers))
+    print("[EventSub] JSON payload:", json.dumps(data, indent=2))
+
     message_type = headers.get("Twitch-Eventsub-Message-Type")
 
     # Verification challenge
     if message_type == "webhook_callback_verification":
+        print("[EventSub] Verification challenge received")
         return data["challenge"]
 
-    # HMAC verification
+    # HMAC verification (optional for debug; comment out if noisy)
     msg_id = headers.get("Twitch-Eventsub-Message-Id")
     timestamp = headers.get("Twitch-Eventsub-Message-Timestamp")
     signature = headers.get("Twitch-Eventsub-Message-Signature")
@@ -72,11 +77,14 @@ def eventsub():
     ).hexdigest()
 
     if not hmac.compare_digest(signature, computed):
+        print("[EventSub] Invalid signature!")
         return "Invalid signature", 403
 
     # Notification
     if message_type == "notification":
         event = data["event"]
+        print(f"[EventSub] Notification event: {event}")
+
         username = event["user_name"].lower()
         reward_title = event["reward"]["title"].lower()
 
@@ -84,22 +92,18 @@ def eventsub():
             component = "slow"
             add_component(username, component)
 
-            # Schedule sending via bot's queue
             async def send_message():
-                try:
-                    channel = bot_instance.get_channel(CHANNEL)
-                    if channel:
-                        await channel.send(f"@{username} received a {component} component!")
-                    else:
-                        print("[Bot] Channel not ready yet")
-                except Exception as e:
-                    print(f"[Bot] Error sending message: {e}")
+                channel = bot_instance.get_channel(CHANNEL)
+                if channel:
+                    await channel.send(f"@{username} received a {component} component!")
+                else:
+                    print("[Bot] Channel not ready yet")
 
-            # Put coroutine function onto bot queue
             if bot_instance:
                 bot_instance.message_queue.put_nowait(send_message)
 
     return "", 200
+
 
 # ---------------- TwitchIO Bot ----------------
 class SpellBot(commands.Bot):
