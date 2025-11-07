@@ -63,7 +63,8 @@ async def eventsub():
     msg_id = headers.get("Twitch-Eventsub-Message-Id")
     timestamp = headers.get("Twitch-Eventsub-Message-Timestamp")
     signature = headers.get("Twitch-Eventsub-Message-Signature")
-    body = await request.get_data()
+    body = request.get_data()
+
 
     computed = "sha256=" + hmac.new(EVENTSUB_SECRET, (msg_id + timestamp + body.decode()).encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, computed):
