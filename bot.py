@@ -17,7 +17,7 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 BOT_ID = os.getenv("BOT_ID")
 DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
 
-COMPONENT_TYPES = ["slow", "fast", "fire", "ice"]  # example types
+COMPONENT_TYPES = ["slow"]  # example types
 
 # ---------------- Inventory Management ----------------
 def ensure_datafile():
