@@ -4,12 +4,13 @@ import json
 import hmac
 import hashlib
 import random
-import asyncio
+import threading
 from flask import Flask, request
 from twitchio.ext import commands
+import asyncio
 
 # ---------------- CONFIG ----------------
-OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # "oauth:xxxx"
+OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # e.g. "oauth:xxxx"
 CHANNEL = os.getenv("CHANNEL", "VahRuan")
 EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET", "super_secret").encode()
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -17,7 +18,7 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 BOT_ID = os.getenv("BOT_ID")
 DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
 
-COMPONENT_TYPES = ["slow"]  # example types
+COMPONENT_TYPES = ["slow"]
 
 # ---------------- Inventory Management ----------------
 def ensure_datafile():
@@ -45,27 +46,25 @@ def add_component(username, component):
 
 # ---------------- Flask App ----------------
 app = Flask(__name__)
-bot_instance = None  # Will be set later
+bot_instance = None  # will be set later
 
 @app.route("/eventsub", methods=["POST"])
-async def eventsub():
+def eventsub():
     """Handle Twitch EventSub notifications."""
     data = request.json
     headers = request.headers
 
     message_type = headers.get("Twitch-Eventsub-Message-Type")
     
-    # Verification challenge
     if message_type == "webhook_callback_verification":
         challenge = data.get("challenge")
-        print(f"[EventSub] Verification request received, responding with challenge: {challenge}")
+        print(f"[EventSub] Verification request received: {challenge}")
         return challenge
 
-    # HMAC verification
     msg_id = headers.get("Twitch-Eventsub-Message-Id")
     timestamp = headers.get("Twitch-Eventsub-Message-Timestamp")
     signature = headers.get("Twitch-Eventsub-Message-Signature")
-    body = await request.get_data()
+    body = request.get_data()
 
     computed = "sha256=" + hmac.new(
         EVENTSUB_SECRET,
@@ -74,15 +73,13 @@ async def eventsub():
     ).hexdigest()
 
     if not hmac.compare_digest(signature, computed):
-        print("[EventSub] Invalid HMAC signature!")
+        print("[EventSub] Invalid HMAC signature")
         return "Invalid", 403
 
     if message_type == "notification":
         event = data.get("event", {})
         username = event.get("user_name", "").lower()
         reward_title = event.get("reward", {}).get("title", "").lower()
-        user_input = (event.get("user_input") or "").strip()
-
         print(f"[EventSub] Notification received: {username} -> {reward_title}")
 
         if "daily spell component" in reward_title:
@@ -90,9 +87,13 @@ async def eventsub():
             add_component(username, component)
             print(f"[EventSub] Added component '{component}' to {username}")
 
-            # Announce in Twitch chat
+            # Send chat message in Twitch
             if bot_instance:
-                await bot_instance.send_message(f"@{username} received a {component} component!")
+                # Run in bot's asyncio loop
+                asyncio.run_coroutine_threadsafe(
+                    bot_instance.send_message(f"@{username} received a {component} component!"),
+                    bot_instance.loop
+                )
 
     return "", 200
 
@@ -127,31 +128,22 @@ class SpellBot(commands.Bot):
         await ctx.send(f"@{user}, your components: " + ", ".join(parts))
 
     async def send_message(self, message):
-        """Send a message to the first connected channel."""
         if self.connected_channels:
             await self.connected_channels[0].send(message)
         else:
             print("[Bot] No connected channels to send message")
 
-# ---------------- Main Async Runner ----------------
-async def run_flask():
-    import hypercorn.asyncio
-    from hypercorn.config import Config
-
-    config = Config()
+# ---------------- Run Everything ----------------
+def run_flask():
     port = int(os.environ.get("PORT", 5000))
-    config.bind = [f"0.0.0.0:{port}"]
     print(f"[Flask] Running on port {port}...")
-    await hypercorn.asyncio.serve(app, config)
-
-async def main():
-    global bot_instance
-    bot_instance = SpellBot()
-    # Run both bot and Flask concurrently
-    await asyncio.gather(
-        bot_instance.start(),
-        run_flask()
-    )
+    app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    bot_instance = SpellBot()
+
+    # Start Flask in a separate thread
+    threading.Thread(target=run_flask, daemon=True).start()
+
+    # Start TwitchIO bot (blocking)
+    bot_instance.run()
