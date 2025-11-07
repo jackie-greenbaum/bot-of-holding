@@ -104,18 +104,15 @@ def eventsub():
             component = "slow"
             add_component(username, component)
 
-            # Queue the message to be sent on the bot's loop
             async def send_message():
-                for _ in range(5):
-                    channel = bot_instance.get_channel(CHANNEL)
-                    if channel:
-                        await channel.send(f"@{username} received a {component} component!")
+                if bot_instance.channel_obj:
+                    try:
+                        await bot_instance.channel_obj.send(f"@{username} received a {component} component!")
                         logging.info("[Bot] Sent message for %s", username)
-                        return
-                    else:
-                        logging.warning("[Bot] Channel not ready yet, retrying in 1s...")
-                        await asyncio.sleep(1)
-                logging.error("[Bot] Failed to send message for %s after retries", username)
+                    except Exception as e:
+                        logging.error("[Bot] Error sending message: %s", e)
+                else:
+                    logging.error("[Bot] Channel object not ready!")
 
             if bot_instance:
                 bot_instance.loop.create_task(send_message())
@@ -133,9 +130,16 @@ class SpellBot(commands.Bot):
             prefix="!",
             initial_channels=[CHANNEL],
         )
+        self.channel_obj = None  # Will store joined channel
 
     async def event_ready(self):
-        logging.info(f"[Bot] Logged in!")
+        logging.info(f"[Bot] Logged in as {self.user.name} (ready!)")
+        # Store channel object for immediate sending
+        self.channel_obj = self.get_channel(CHANNEL)
+        if self.channel_obj:
+            logging.info(f"[Bot] Channel object ready: {CHANNEL}")
+        else:
+            logging.warning(f"[Bot] Failed to get channel object for {CHANNEL}")
 
     async def event_message(self, message):
         if message.echo or message.author is None:
