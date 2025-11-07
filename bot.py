@@ -3,8 +3,9 @@ import os
 import json
 import hmac
 import hashlib
-import asyncio
+import random
 import threading
+import asyncio
 from flask import Flask, request
 from twitchio.ext import commands
 
@@ -17,7 +18,7 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 BOT_ID = os.getenv("BOT_ID")
 DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
 
-COMPONENT_TYPES = ["slow"]  # Only "slow"
+COMPONENT_TYPES = ["slow"]  # Only slow component
 
 # ---------------- Inventory Management ----------------
 def ensure_datafile():
@@ -45,7 +46,8 @@ def add_component(username, component):
 
 # ---------------- Flask App ----------------
 app = Flask(__name__)
-bot_instance = None  # Will be set when bot starts
+bot_instance = None
+bot_loop = None  # Background bot's event loop
 
 @app.route("/eventsub", methods=["POST"])
 def eventsub():
@@ -57,6 +59,7 @@ def eventsub():
 
     # Verification challenge
     if message_type == "webhook_callback_verification":
+        print("[EventSub] Verification request received")
         return data["challenge"]
 
     # HMAC verification
@@ -66,33 +69,32 @@ def eventsub():
     body = request.get_data()
 
     computed = "sha256=" + hmac.new(
-        EVENTSUB_SECRET,
-        (msg_id + timestamp + body.decode()).encode(),
-        hashlib.sha256
+        EVENTSUB_SECRET, (msg_id + timestamp + body.decode()).encode(), hashlib.sha256
     ).hexdigest()
 
     if not hmac.compare_digest(signature, computed):
+        print("[EventSub] Invalid HMAC signature")
         return "Invalid", 403
 
     if message_type == "notification":
         event = data["event"]
         username = event["user_name"].lower()
         reward_title = event["reward"]["title"].lower()
+        user_input = (event.get("user_input") or "").strip()
 
         if "daily spell component" in reward_title:
-            component = "slow"  # Always give the "slow" component
+            component = random.choice(COMPONENT_TYPES)
             add_component(username, component)
+            print(f"[EventSub] {username} received a {component} component")
 
-            # Send message to Twitch chat safely from Flask thread
-            if bot_instance and bot_instance.loop.is_running():
+            # Send message in Twitch chat
+            if bot_instance and bot_loop and bot_loop.is_running():
                 asyncio.run_coroutine_threadsafe(
-                    bot_instance.send_message(
-                        f"@{username} received a {component} component!"
-                    ),
-                    bot_instance.loop
+                    bot_instance.send_message(f"@{username} received a {component} component!"),
+                    bot_loop
                 )
             else:
-                print(f"[Bot] Bot not ready, {username} would have received a {component} component")
+                print(f"[EventSub] Bot not ready to send message for {username}")
 
     return "", 200
 
@@ -107,7 +109,6 @@ class SpellBot(commands.Bot):
             prefix="!",
             initial_channels=[CHANNEL],
         )
-        self._loop = asyncio.new_event_loop()  # Threaded loop
 
     async def event_ready(self):
         print(f"[Bot] Logged in as {self.user.name} (ready!)")
@@ -131,23 +132,23 @@ class SpellBot(commands.Bot):
         """Send a message to the first connected channel."""
         if self.connected_channels:
             await self.connected_channels[0].send(message)
-            print(f"[Bot] Sent message: {message}")
         else:
             print("[Bot] No connected channels to send message")
 
 # ---------------- Run ----------------
-if __name__ == "__main__":
+def start_bot():
+    global bot_instance, bot_loop
     bot_instance = SpellBot()
+    bot_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(bot_loop)
+    print("[Bot] Starting Twitch bot...")
+    bot_loop.run_until_complete(bot_instance.start())
 
-    # Start Flask in a background thread
-    def run_flask():
-        port = int(os.environ.get("PORT", 5000))
-        print(f"[Main] Starting Flask on port {port}")
-        app.run(host="0.0.0.0", port=port)
+if __name__ == "__main__":
+    # Start TwitchIO bot in background thread
+    threading.Thread(target=start_bot, daemon=True).start()
 
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    print("[Main] Flask started in background thread")
-
-    # Run Twitch bot in main thread
-    asyncio.run(bot_instance.start())
+    # Run Flask app in main thread
+    port = int(os.environ.get("PORT", 5000))
+    print(f"[Flask] Starting EventSub listener on port {port}...")
+    app.run(host="0.0.0.0", port=port)
