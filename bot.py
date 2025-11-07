@@ -11,7 +11,7 @@ from twitchio.ext import commands
 
 # ---------------- CONFIG ----------------
 OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # e.g. "oauth:xxxxxx"
-CHANNEL = os.getenv("CHANNEL", "57187354")
+CHANNEL = os.getenv("CHANNEL", "VahRuan")
 EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET", "super_secret").encode()
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
@@ -108,7 +108,7 @@ def eventsub():
             async def send_message():
                 for _ in range(5):  # Retry up to 5 times
                     try:
-                        channel = await bot_instance.fetch_channel(CHANNEL)
+                        channel = await bot_instance.fetch_channel(BOT_ID)
                         if channel:
                             await channel.send(f"@{username} received a {component} component!")
                             logging.info("[Bot] Sent message for %s", username)
