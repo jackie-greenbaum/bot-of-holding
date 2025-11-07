@@ -44,11 +44,15 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 def add_component(username, component):
-    data = load_data()
-    inv = data.get(username, {})
-    inv[component] = inv.get(component, 0) + 1
-    data[username] = inv
-    save_data(data)
+    try:
+        data = load_data()
+        inv = data.get(username, {})
+        inv[component] = inv.get(component, 0) + 1
+        data[username] = inv
+        save_data(data)
+        logging.info("[Bot] Added component '%s' for user '%s'", component, username)
+    except Exception as e:
+        logging.error("[Bot] Error adding component: %s", e)
 
 # ---------------- Flask App ----------------
 app = Flask(__name__)
@@ -94,7 +98,8 @@ def eventsub():
         logging.info("[EventSub] Notification event: %s", event)
 
         username = event["user_name"].lower()
-        reward_title = event["reward"]["title"].lower()
+        reward_title = event["reward"]["title"].strip().lower()
+        logging.info("[EventSub] Checking reward title: '%s'", reward_title)
 
         if "daily spell component" in reward_title:
             component = "slow"
