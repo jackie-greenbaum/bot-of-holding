@@ -3,7 +3,6 @@ import os
 import json
 import hmac
 import hashlib
-import random
 import threading
 import asyncio
 from flask import Flask, request
@@ -48,6 +47,13 @@ def add_component(username, component):
 app = Flask(__name__)
 bot_instance = None  # Will be set when bot starts
 
+def schedule_on_bot(coro):
+    """Schedule a coroutine on the bot's loop from another thread."""
+    if bot_instance and hasattr(bot_instance, "_loop"):
+        bot_instance._loop.call_soon_threadsafe(lambda: asyncio.create_task(coro))
+    else:
+        print("[Bot] Cannot schedule message; bot not ready yet.")
+
 @app.route("/eventsub", methods=["POST"])
 def eventsub():
     """Handle Twitch EventSub notifications."""
@@ -71,6 +77,7 @@ def eventsub():
         (msg_id + timestamp + body.decode()).encode(),
         hashlib.sha256
     ).hexdigest()
+
     if not hmac.compare_digest(signature, computed):
         return "Invalid signature", 403
 
@@ -84,19 +91,18 @@ def eventsub():
             component = "slow"
             add_component(username, component)
 
-            # Send message via bot's loop
-            if bot_instance:
-                async def send_message():
-                    try:
-                        channel = bot_instance.get_channel(CHANNEL)
-                        if channel:
-                            await channel.send(f"@{username} received a {component} component!")
-                        else:
-                            print("[Bot] Channel not ready yet")
-                    except Exception as e:
-                        print(f"[Bot] Error sending message: {e}")
+            # Send message via bot
+            async def send_message():
+                try:
+                    channel = bot_instance.get_channel(CHANNEL)
+                    if channel:
+                        await channel.send(f"@{username} received a {component} component!")
+                    else:
+                        print("[Bot] Channel not ready yet")
+                except Exception as e:
+                    print(f"[Bot] Error sending message: {e}")
 
-                asyncio.run_coroutine_threadsafe(send_message(), bot_instance.loop)
+            schedule_on_bot(send_message())
 
     return "", 200
 
