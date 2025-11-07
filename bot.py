@@ -8,6 +8,7 @@ import asyncio
 import logging
 from flask import Flask, request
 from twitchio.ext import commands
+import random
 
 # ---------------- CONFIG ----------------
 OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # e.g. "oauth:xxxxxx"
@@ -58,65 +59,58 @@ def add_component(username, component):
 app = Flask(__name__)
 bot_instance = None  # Will be set when bot starts
 
+def announce_gain(username, component):
+    """Send a message to chat from any thread."""
+    if bot_instance is None:
+        return
+
+    channel = bot_instance.get_channel(CHANNEL)
+    if channel is None:
+        # Bot hasn't joined the channel yet
+        print(f"[announce_gain] Bot not ready to send message for {username}")
+        return
+
+    # Schedule the send on the bot's event loop
+    coro = channel.send(f"@{username} received a {component.capitalize()} component!")
+    asyncio.run_coroutine_threadsafe(coro, bot_instance.loop)
+
 @app.route("/eventsub", methods=["POST"])
 def eventsub():
-    """Handle Twitch EventSub notifications."""
+    print("=== EventSub request received ===")
+    print("Headers:", request.headers)
+    print("Body:", request.data.decode())
+
+    message_type = request.headers.get("Twitch-Eventsub-Message-Type")
     data = request.json
-    headers = request.headers
 
-    logging.info("[EventSub] Received request")
-    logging.info("[EventSub] Headers: %s", dict(headers))
-    logging.info("[EventSub] Payload: %s", json.dumps(data, indent=2))
-
-    message_type = headers.get("Twitch-Eventsub-Message-Type")
-
-    # Verification challenge
+    # Handle verification first
     if message_type == "webhook_callback_verification":
-        logging.info("[EventSub] Verification challenge received: %s", data.get("challenge"))
+        print("[EventSub] Received verification challenge")
         return data["challenge"]
 
-    # HMAC verification
-    msg_id = headers.get("Twitch-Eventsub-Message-Id")
-    timestamp = headers.get("Twitch-Eventsub-Message-Timestamp")
-    signature = headers.get("Twitch-Eventsub-Message-Signature")
-    body = request.get_data()
+    # HMAC verification for notifications
+    msg_id = request.headers.get("Twitch-Eventsub-Message-Id")
+    timestamp = request.headers.get("Twitch-Eventsub-Message-Timestamp")
+    signature = request.headers.get("Twitch-Eventsub-Message-Signature")
+    body = request.data.decode()
 
-    computed = "sha256=" + hmac.new(
-        EVENTSUB_SECRET,
-        (msg_id + timestamp + body.decode()).encode(),
-        hashlib.sha256
-    ).hexdigest()
-
+    computed = "sha256=" + hmac.new(EVENTSUB_SECRET, (msg_id + timestamp + body).encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, computed):
-        logging.warning("[EventSub] Invalid signature!")
-        return "Invalid signature", 403
+        print("[EventSub] Invalid HMAC signature")
+        return "Invalid", 403
 
-    # Notification
+    # Handle notifications
     if message_type == "notification":
         event = data["event"]
-        logging.info("[EventSub] Notification event: %s", event)
-
         username = event["user_name"].lower()
-        reward_title = event["reward"]["title"].strip().lower()
-        logging.info("[EventSub] Checking reward title: '%s'", reward_title)
+        reward_title = event["reward"]["title"].lower()  # lowercase for comparison
+        result_text = (event.get("user_input") or "").lower().strip()
 
         if "daily spell component" in reward_title:
-            component = "slow"
+            component = random.choice(COMPONENT_TYPES)
             add_component(username, component)
-
-            async def send_message():
-                # Wait until the bot is connected
-                await bot_instance.ready_event.wait()
-                try:
-                    # Fetch a fully ready channel object
-                    channel = await bot_instance.fetch_channel(CHANNEL)
-                    await channel.send(f"@{username} received a {component} component!")
-                    logging.info("[Bot] Sent message for %s", username)
-                except Exception as e:
-                    logging.error("[Bot] Error sending message: %s", e)
-
-            if bot_instance:
-                bot_instance.loop.create_task(send_message())
+            announce_gain(username, component)
+            print(f"[EventSub] {username} gained {component} component from: '{result_text}'")
 
     return "", 200
 
