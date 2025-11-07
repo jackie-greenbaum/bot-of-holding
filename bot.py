@@ -105,14 +105,15 @@ def eventsub():
             add_component(username, component)
 
             async def send_message():
-                if bot_instance.channel_obj:
-                    try:
-                        await bot_instance.channel_obj.send(f"@{username} received a {component} component!")
-                        logging.info("[Bot] Sent message for %s", username)
-                    except Exception as e:
-                        logging.error("[Bot] Error sending message: %s", e)
-                else:
-                    logging.error("[Bot] Channel object not ready!")
+                # Wait until the bot is connected
+                await bot_instance.ready_event.wait()
+                try:
+                    # Fetch a fully ready channel object
+                    channel = await bot_instance.fetch_channel(CHANNEL)
+                    await channel.send(f"@{username} received a {component} component!")
+                    logging.info("[Bot] Sent message for %s", username)
+                except Exception as e:
+                    logging.error("[Bot] Error sending message: %s", e)
 
             if bot_instance:
                 bot_instance.loop.create_task(send_message())
@@ -130,16 +131,12 @@ class SpellBot(commands.Bot):
             prefix="!",
             initial_channels=[CHANNEL],
         )
-        self.channel_obj = None  # Will store joined channel
+        self.ready_event = asyncio.Event()
 
     async def event_ready(self):
-        logging.info(f"[Bot] Logged in!")
-        # Store channel object for immediate sending
-        self.channel_obj = self.get_channel(CHANNEL)
-        if self.channel_obj:
-            logging.info(f"[Bot] Channel object ready: {CHANNEL}")
-        else:
-            logging.warning(f"[Bot] Failed to get channel object for {CHANNEL}")
+        logging.info(f"[Bot] Logged in as {self.user.name} (ready!)")
+        # Signal that bot is ready
+        self.ready_event.set()
 
     async def event_message(self, message):
         if message.echo or message.author is None:
