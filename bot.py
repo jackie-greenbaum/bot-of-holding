@@ -14,6 +14,9 @@ OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")
 CHANNEL = os.getenv("CHANNEL", "VahRuan")
 EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET").encode()
 DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+BOT_ID = os.getenv("BOT_ID")
 COMPONENT_TYPES = ["slow"]
 
 # ---------------- Inventory ----------------
@@ -48,11 +51,14 @@ class SpellBot(commands.Bot):
         super().__init__(
             token=OAUTH_TOKEN,
             prefix="!",
-            initial_channels=[CHANNEL]
+            initial_channels=[CHANNEL],
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            bot_id=BOT_ID
         )
 
     async def event_ready(self):
-        print(f"[Bot] Logged in as {self.nick}")
+        print(f"[Bot] Logged in as {self.user.name}")
         # Announce gains in the background
         asyncio.create_task(self.announce_loop())
 
