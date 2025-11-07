@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir hypercorn
 
 # Expose port (Render sets $PORT)
-EXPOSE 10000
+EXPOSE 5000
 
 # Run bot using Hypercorn for async support
 CMD ["hypercorn", "bot:app", "--bind", "0.0.0.0:$PORT", "--workers", "1"]

@@ -129,7 +129,7 @@ async def main():
     import hypercorn.asyncio
     from hypercorn.config import Config
 
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 5000))
     config = Config()
     config.bind = [f"0.0.0.0:{port}"]
 
