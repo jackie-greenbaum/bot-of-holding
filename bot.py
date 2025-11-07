@@ -128,7 +128,7 @@ class SpellBot(commands.Bot):
         self.ready_event = asyncio.Event()
 
     async def event_ready(self):
-        logging.info(f"[Bot] Logged in as {self.user.name} (ready!)")
+        logging.info(f"[Bot] Logged in!")
         # Signal that bot is ready
         self.ready_event.set()
 
