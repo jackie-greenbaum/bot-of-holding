@@ -48,9 +48,9 @@ app = Flask(__name__)
 bot_instance = None  # Will be set when bot starts
 
 def schedule_on_bot(coro_obj):
-    """Schedule a coroutine object on the bot's loop from another thread."""
     if bot_instance and hasattr(bot_instance, "_loop"):
-        bot_instance._loop.call_soon_threadsafe(lambda: asyncio.create_task(coro_obj))
+        loop = bot_instance._loop
+        loop.call_soon_threadsafe(lambda co=coro_obj: asyncio.create_task(co))
     else:
         print("[Bot] Cannot schedule message; bot not ready yet.")
 
@@ -93,17 +93,14 @@ def eventsub():
 
             # Send message via bot
             async def send_message():
-                try:
-                    channel = bot_instance.get_channel(CHANNEL)
-                    if channel:
-                        await channel.send(f"@{username} received a {component} component!")
-                    else:
-                        print("[Bot] Channel not ready yet")
-                except Exception as e:
-                    print(f"[Bot] Error sending message: {e}")
+                channel = bot_instance.get_channel(CHANNEL)
+                if channel:
+                    await channel.send(f"@{username} received a {component} component!")
+                else:
+                    print("[Bot] Channel not ready yet")
 
-            # FIX: pass coroutine object, not function
-            schedule_on_bot(send_message())
+            # Schedule the coroutine correctly
+            schedule_on_bot(send_message())  # parentheses to get coroutine object
 
     return "", 200
 
