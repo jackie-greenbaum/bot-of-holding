@@ -1,64 +1,64 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 import os
 import json
 import hmac
 import hashlib
 import random
 import asyncio
+from collections import deque
 from flask import Flask, request
 from twitchio.ext import commands
 
 # ---------------- CONFIG ----------------
-OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # "oauth:xxxx"
+OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # e.g., "oauth:xxxx"
 CHANNEL = os.getenv("CHANNEL", "VahRuan")
 EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET").encode()
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 BOT_ID = os.getenv("BOT_ID")
-
 DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
+
 COMPONENT_TYPES = ["slow", "fast", "fire", "ice"]
 
-# ---------------- Inventory Management ----------------
-def ensure_datafile():
+# ---------------- Inventory ----------------
+data_lock = asyncio.Lock()
+gain_queue = deque()
+
+async def ensure_datafile():
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     if not os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "w") as f:
-            json.dump({}, f)
+        async with aiofiles.open(DATA_FILE, "w") as f:
+            await f.write("{}")
 
-def load_data():
-    ensure_datafile()
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+async def load_data():
+    await ensure_datafile()
+    async with data_lock:
+        async with aiofiles.open(DATA_FILE, "r") as f:
+            return json.loads(await f.read())
 
-def save_data(data):
-    ensure_datafile()
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+async def save_data(data):
+    await ensure_datafile()
+    async with data_lock:
+        async with aiofiles.open(DATA_FILE, "w") as f:
+            await f.write(json.dumps(data, indent=2))
 
-def add_component(username, component):
-    data = load_data()
+async def add_component(username, component):
+    data = await load_data()
     inv = data.get(username, {})
     inv[component] = inv.get(component, 0) + 1
     data[username] = inv
-    save_data(data)
+    await save_data(data)
 
-# ---------------- Flask App ----------------
+# ---------------- Flask ----------------
 app = Flask(__name__)
-bot_instance = None  # set later
+bot_instance = None  # Set later
 
 @app.route("/eventsub", methods=["POST"])
-def eventsub():
-    print("=== EventSub request received ===")
-    print("Headers:", dict(request.headers))
-    print("Body:", request.data.decode())
-
+async def eventsub():
     message_type = request.headers.get("Twitch-Eventsub-Message-Type")
     data = request.json
 
-    # Challenge verification
     if message_type == "webhook_callback_verification":
-        print("[EventSub] Verification challenge received")
         return data["challenge"]
 
     # HMAC verification
@@ -69,10 +69,8 @@ def eventsub():
 
     computed = "sha256=" + hmac.new(EVENTSUB_SECRET, (msg_id + timestamp + body).encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, computed):
-        print("[EventSub] Invalid HMAC signature")
         return "Invalid", 403
 
-    # Notification handling
     if message_type == "notification":
         event = data["event"]
         username = event["user_name"].lower()
@@ -81,25 +79,27 @@ def eventsub():
 
         if "daily spell component" in reward_title:
             component = random.choice(COMPONENT_TYPES)
-            add_component(username, component)
-            print(f"[EventSub] {username} gained {component} from: '{result_text}'")
-
-            # Announce in chat asynchronously
-            if bot_instance:
-                bot_instance.loop.create_task(bot_instance.announce_gain(username, component))
+            await add_component(username, component)
+            gain_queue.append((username, component))
+            await announce_gain(username, component)
 
     return "", 200
 
-# ---------------- TwitchIO Bot ----------------
+async def announce_gain(username, component):
+    if bot_instance and bot_instance.connected_channels:
+        channel = bot_instance.connected_channels[0]
+        await channel.send(f"@{username} received a {component.capitalize()} component!")
+
+# ---------------- Twitch Bot ----------------
 class SpellBot(commands.Bot):
     def __init__(self):
         super().__init__(
             token=OAUTH_TOKEN,
-            prefix="!",
-            initial_channels=[CHANNEL],
             client_id=CLIENT_ID,
             client_secret=CLIENT_SECRET,
-            bot_id=BOT_ID
+            bot_id=BOT_ID,
+            prefix="!",
+            initial_channels=[CHANNEL]
         )
 
     async def event_ready(self):
@@ -110,34 +110,34 @@ class SpellBot(commands.Bot):
             return
         await self.handle_commands(message)
 
-    async def announce_gain(self, username, component):
-        """Announce a component gain in chat."""
-        channel = await self.get_channel(CHANNEL)
-        if channel:
-            await channel.send(f"@{username} received a {component.capitalize()} component!")
-            print(f"[Bot] Announced: @{username} received {component}")
-        else:
-            print("[Bot] Channel not available yet")
-
     @commands.command()
     async def inventory(self, ctx):
         user = ctx.author.name.lower()
-        inv = load_data().get(user, {})
+        data = await load_data()
+        inv = data.get(user, {})
         if not inv:
             await ctx.send(f"@{user}, you have no components yet.")
             return
         parts = [f"{k.capitalize()} x{v}" for k, v in inv.items()]
         await ctx.send(f"@{user}, your components: " + ", ".join(parts))
 
-# ---------------- Run Flask + Bot ----------------
-if __name__ == "__main__":
-    import threading
-
+# ---------------- Run everything ----------------
+async def main():
+    global bot_instance
     bot_instance = SpellBot()
+    # Start bot and Flask concurrently
+    import hypercorn.asyncio
+    from hypercorn.config import Config
 
-    # Run Twitch bot in a background thread
-    threading.Thread(target=lambda: asyncio.run(bot_instance.start()), daemon=True).start()
-
-    # Flask uses port from environment (Render) or 10000
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    config = Config()
+    config.bind = [f"0.0.0.0:{port}"]
+
+    await asyncio.gather(
+        bot_instance.start(),
+        hypercorn.asyncio.serve(app, config)
+    )
+
+if __name__ == "__main__":
+    import aiofiles
+    asyncio.run(main())
