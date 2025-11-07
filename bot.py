@@ -133,7 +133,7 @@ class SpellBot(commands.Bot):
         self.channel_obj = None  # Will store joined channel
 
     async def event_ready(self):
-        logging.info(f"[Bot] Logged in as {self.user.name} (ready!)")
+        logging.info(f"[Bot] Logged in!")
         # Store channel object for immediate sending
         self.channel_obj = self.get_channel(CHANNEL)
         if self.channel_obj:
