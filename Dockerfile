@@ -1,4 +1,4 @@
-# Use Python 3.11 slim base image
+# Base image
 FROM python:3.11-slim
 
 # Set working directory
@@ -7,13 +7,12 @@ WORKDIR /app
 # Copy bot code and requirements
 COPY . /app
 
-# Install dependencies
+# Upgrade pip and install dependencies
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir hypercorn
+    && pip install --no-cache-dir -r requirements.txt
 
-# Expose port (Render sets $PORT)
+# Expose the port (Render will override with $PORT)
 EXPOSE 5000
 
-# Run bot using Hypercorn for async support
-CMD ["hypercorn", "bot:app", "--bind", "0.0.0.0:$PORT", "--workers", "1"]
+# Start Hypercorn binding to all interfaces and dynamic port
+CMD ["sh", "-c", "hypercorn bot:app --bind 0.0.0.0:${PORT:-5000}"]
