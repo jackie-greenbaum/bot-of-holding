@@ -106,12 +106,20 @@ def eventsub():
             add_component(username, component)
 
             async def send_message():
-                channel = bot_instance.get_channel(CHANNEL)
-                if channel:
-                    await channel.send(f"@{username} received a {component} component!")
-                    logging.info("[Bot] Sent message for %s", username)
-                else:
-                    logging.warning("[Bot] Channel not ready yet")
+                for _ in range(5):  # Retry up to 5 times
+                    try:
+                        channel = await bot_instance.fetch_channel(CHANNEL)
+                        if channel:
+                            await channel.send(f"@{username} received a {component} component!")
+                            logging.info("[Bot] Sent message for %s", username)
+                            return
+                        else:
+                            logging.warning("[Bot] Channel not ready yet, retrying in 1s...")
+                            await asyncio.sleep(1)
+                    except Exception as e:
+                        logging.error("[Bot] Error sending message: %s", e)
+                        await asyncio.sleep(1)
+                logging.error("[Bot] Failed to send message for %s after retries", username)
 
             if bot_instance:
                 bot_instance.message_queue.put_nowait(send_message)
