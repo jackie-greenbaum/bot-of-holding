@@ -11,7 +11,7 @@ from twitchio.ext import commands
 
 # ---------------- CONFIG ----------------
 OAUTH_TOKEN = os.getenv("OAUTH_TOKEN")  # e.g. "oauth:xxxxxx"
-CHANNEL = os.getenv("CHANNEL", "VahRuan")
+CHANNEL = os.getenv("CHANNEL", "57187354")
 EVENTSUB_SECRET = os.getenv("EVENTSUB_SECRET", "super_secret").encode()
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
