@@ -1,4 +1,11 @@
+# Twitch bot framework
 twitchio==3.1.0
+
+# Web server
 Flask[async]==2.3.3
-hypercorn
+
+# For async file operations
 aiofiles
+
+# Random choice utilities and HTTP requests if needed
+requests

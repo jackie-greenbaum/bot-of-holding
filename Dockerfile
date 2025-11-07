@@ -12,8 +12,8 @@ COPY . /app
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Expose the port the app runs on
+# Expose Flask port
 EXPOSE 5000
 
-# Run bot using Hypercorn (async Flask)
-CMD ["hypercorn", "bot:app", "--bind", "0.0.0.0:5000"]
+# Run bot (Flask runs in background thread)
+CMD ["python", "bot.py"]
