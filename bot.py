@@ -64,7 +64,6 @@ def eventsub():
     data = request.json
     headers = request.headers
 
-    # Log headers and payload
     logging.info("[EventSub] Received request")
     logging.info("[EventSub] Headers: %s", dict(headers))
     logging.info("[EventSub] Payload: %s", json.dumps(data, indent=2))
@@ -105,24 +104,21 @@ def eventsub():
             component = "slow"
             add_component(username, component)
 
+            # Queue the message to be sent on the bot's loop
             async def send_message():
-                for _ in range(5):  # Retry up to 5 times
-                    try:
-                        channel = await bot_instance.fetch_channel(BOT_ID)
-                        if channel:
-                            await channel.send(f"@{username} received a {component} component!")
-                            logging.info("[Bot] Sent message for %s", username)
-                            return
-                        else:
-                            logging.warning("[Bot] Channel not ready yet, retrying in 1s...")
-                            await asyncio.sleep(1)
-                    except Exception as e:
-                        logging.error("[Bot] Error sending message: %s", e)
+                for _ in range(5):
+                    channel = bot_instance.get_channel(CHANNEL)
+                    if channel:
+                        await channel.send(f"@{username} received a {component} component!")
+                        logging.info("[Bot] Sent message for %s", username)
+                        return
+                    else:
+                        logging.warning("[Bot] Channel not ready yet, retrying in 1s...")
                         await asyncio.sleep(1)
                 logging.error("[Bot] Failed to send message for %s after retries", username)
 
             if bot_instance:
-                bot_instance.message_queue.put_nowait(send_message)
+                bot_instance.loop.create_task(send_message())
 
     return "", 200
 
@@ -138,22 +134,8 @@ class SpellBot(commands.Bot):
             initial_channels=[CHANNEL],
         )
 
-        # Queue to receive coroutines from Flask thread
-        self.message_queue = asyncio.Queue()
-
     async def event_ready(self):
         logging.info(f"[Bot] Logged in as {self.user.name} (ready!)")
-        # Start queue worker
-        asyncio.create_task(self.queue_worker())
-
-    async def queue_worker(self):
-        """Consume coroutines from the queue and run them on the bot's loop."""
-        while True:
-            coro_func = await self.message_queue.get()
-            try:
-                await coro_func()
-            except Exception as e:
-                logging.error(f"[Bot] Error in queue worker: {e}")
 
     async def event_message(self, message):
         if message.echo or message.author is None:

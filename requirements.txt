@@ -1,10 +1,10 @@
-# Twitch bot framework
-twitchio==3.1.0
+# Twitch bot framework (v2)
+twitchio==2.3.0
 
 # Web server
-Flask[async]==2.3.3
+Flask==2.3.3
 
-# For async file operations
+# Optional: for async file operations
 aiofiles
 
 # Random choice utilities and HTTP requests if needed
