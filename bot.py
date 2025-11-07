@@ -144,15 +144,15 @@ class SpellBot(commands.Bot):
 if __name__ == "__main__":
     bot_instance = SpellBot()
 
-    # Start Twitch bot in background thread
-    def start_bot():
-        asyncio.set_event_loop(bot_instance._loop)
-        bot_instance._loop.run_until_complete(bot_instance.start())
+    # Start Flask in a background thread
+    def run_flask():
+        port = int(os.environ.get("PORT", 5000))
+        print(f"[Main] Starting Flask on port {port}")
+        app.run(host="0.0.0.0", port=port)
 
-    threading.Thread(target=start_bot, daemon=True).start()
-    print("[Main] Twitch bot started in background thread")
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print("[Main] Flask started in background thread")
 
-    # Start Flask in main thread
-    port = int(os.environ.get("PORT", 5000))
-    print(f"[Main] Starting Flask on port {port}")
-    app.run(host="0.0.0.0", port=port)
+    # Run Twitch bot in main thread
+    asyncio.run(bot_instance.start())
