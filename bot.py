@@ -50,17 +50,14 @@ bot_instance = None  # will be set in main thread
 
 @app.route("/eventsub", methods=["POST"])
 def eventsub():
-    """Handle Twitch EventSub notifications."""
     data = request.json
     headers = request.headers
 
     message_type = headers.get("Twitch-Eventsub-Message-Type")
 
-    # Verification challenge
     if message_type == "webhook_callback_verification":
         return data["challenge"]
 
-    # HMAC verification
     msg_id = headers.get("Twitch-Eventsub-Message-Id")
     timestamp = headers.get("Twitch-Eventsub-Message-Timestamp")
     signature = headers.get("Twitch-Eventsub-Message-Signature")
@@ -78,18 +75,21 @@ def eventsub():
         event = data["event"]
         username = event["user_name"].lower()
         reward_title = event["reward"]["title"].lower()
-        user_input = (event.get("user_input") or "").strip()
 
         if "daily spell component" in reward_title:
-            component = random.choice(COMPONENT_TYPES)
+            component = "slow"  # only slow
             add_component(username, component)
 
-            # Announce in Twitch chat (schedule coroutine in bot loop)
-            if bot_instance and bot_instance.connected_channels:
-                asyncio.run_coroutine_threadsafe(
-                    bot_instance.send_message(f"@{username} received a {component} component!"),
-                    bot_instance.loop
-                )
+            # Send message in Twitch chat
+            if bot_instance and bot_instance.is_ready:
+                channel = bot_instance.get_channel(CHANNEL)
+                if channel:
+                    asyncio.run_coroutine_threadsafe(
+                        channel.send(f"@{username} received a {component} component!"),
+                        bot_instance.loop
+                    )
+                else:
+                    print("[Bot] Channel not ready yet")
 
     return "", 200
 
