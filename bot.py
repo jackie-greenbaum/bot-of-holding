@@ -50,13 +50,13 @@ bot_instance = None  # Will be set when bot starts
 @app.route("/eventsub", methods=["POST"])
 def eventsub():
     """Handle Twitch EventSub notifications."""
-    data = request.get_json()
+    data = request.json
     headers = request.headers
 
     message_type = headers.get("Twitch-Eventsub-Message-Type")
 
+    # Verification challenge
     if message_type == "webhook_callback_verification":
-        print("[EventSub] Verification request received")
         return data["challenge"]
 
     # HMAC verification
@@ -65,39 +65,34 @@ def eventsub():
     signature = headers.get("Twitch-Eventsub-Message-Signature")
     body = request.get_data()
 
-    if msg_id and timestamp and signature:
-        computed = "sha256=" + hmac.new(
-            EVENTSUB_SECRET,
-            (msg_id + timestamp + body.decode()).encode(),
-            hashlib.sha256
-        ).hexdigest()
+    computed = "sha256=" + hmac.new(
+        EVENTSUB_SECRET,
+        (msg_id + timestamp + body.decode()).encode(),
+        hashlib.sha256
+    ).hexdigest()
 
-        if not hmac.compare_digest(signature, computed):
-            print("[EventSub] Invalid signature!")
-            return "Invalid", 403
-    else:
-        print("[EventSub] Missing HMAC headers, skipping verification")
+    if not hmac.compare_digest(signature, computed):
+        return "Invalid", 403
 
     if message_type == "notification":
-        event = data.get("event", {})
-        username = event.get("user_name", "").lower()
-        reward_title = event.get("reward", {}).get("title", "").lower()
-        user_input = (event.get("user_input") or "").strip()
-
-        print(f"[EventSub] Redemption from {username}: {reward_title}")
+        event = data["event"]
+        username = event["user_name"].lower()
+        reward_title = event["reward"]["title"].lower()
 
         if "daily spell component" in reward_title:
-            component = COMPONENT_TYPES[0]
+            component = "slow"  # Always give the "slow" component
             add_component(username, component)
-            print(f"[EventSub] Added {component} to {username}")
 
-            # Announce in Twitch chat
-            if bot_instance:
-                future = asyncio.run_coroutine_threadsafe(
-                    bot_instance.send_message(f"@{username} received a {component} component!"),
-                    bot_instance._loop
+            # Send message to Twitch chat safely from Flask thread
+            if bot_instance and bot_instance.loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    bot_instance.send_message(
+                        f"@{username} received a {component} component!"
+                    ),
+                    bot_instance.loop
                 )
-                future.add_done_callback(lambda f: print(f"[Bot] Message sent to Twitch"))
+            else:
+                print(f"[Bot] Bot not ready, {username} would have received a {component} component")
 
     return "", 200
 
