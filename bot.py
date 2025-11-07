@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import threading
 import asyncio
+import logging
 from flask import Flask, request
 from twitchio.ext import commands
 
@@ -18,6 +19,12 @@ BOT_ID = os.getenv("BOT_ID")
 DATA_FILE = os.getenv("DATA_FILE", "disk/inventory.json")
 
 COMPONENT_TYPES = ["slow"]  # Only "slow" component
+
+# ---------------- Logging ----------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 # ---------------- Inventory Management ----------------
 def ensure_datafile():
@@ -53,18 +60,19 @@ def eventsub():
     data = request.json
     headers = request.headers
 
-    # DEBUG: print full payload and headers
-    print("\n[EventSub] Headers:", dict(headers))
-    print("[EventSub] JSON payload:", json.dumps(data, indent=2))
+    # Log headers and payload
+    logging.info("[EventSub] Received request")
+    logging.info("[EventSub] Headers: %s", dict(headers))
+    logging.info("[EventSub] Payload: %s", json.dumps(data, indent=2))
 
     message_type = headers.get("Twitch-Eventsub-Message-Type")
 
     # Verification challenge
     if message_type == "webhook_callback_verification":
-        print("[EventSub] Verification challenge received")
+        logging.info("[EventSub] Verification challenge received: %s", data.get("challenge"))
         return data["challenge"]
 
-    # HMAC verification (optional for debug; comment out if noisy)
+    # HMAC verification
     msg_id = headers.get("Twitch-Eventsub-Message-Id")
     timestamp = headers.get("Twitch-Eventsub-Message-Timestamp")
     signature = headers.get("Twitch-Eventsub-Message-Signature")
@@ -77,13 +85,13 @@ def eventsub():
     ).hexdigest()
 
     if not hmac.compare_digest(signature, computed):
-        print("[EventSub] Invalid signature!")
+        logging.warning("[EventSub] Invalid signature!")
         return "Invalid signature", 403
 
     # Notification
     if message_type == "notification":
         event = data["event"]
-        print(f"[EventSub] Notification event: {event}")
+        logging.info("[EventSub] Notification event: %s", event)
 
         username = event["user_name"].lower()
         reward_title = event["reward"]["title"].lower()
@@ -96,14 +104,14 @@ def eventsub():
                 channel = bot_instance.get_channel(CHANNEL)
                 if channel:
                     await channel.send(f"@{username} received a {component} component!")
+                    logging.info("[Bot] Sent message for %s", username)
                 else:
-                    print("[Bot] Channel not ready yet")
+                    logging.warning("[Bot] Channel not ready yet")
 
             if bot_instance:
                 bot_instance.message_queue.put_nowait(send_message)
 
     return "", 200
-
 
 # ---------------- TwitchIO Bot ----------------
 class SpellBot(commands.Bot):
@@ -121,7 +129,7 @@ class SpellBot(commands.Bot):
         self.message_queue = asyncio.Queue()
 
     async def event_ready(self):
-        print(f"[Bot] Logged in as {self.user.name} (ready!)")
+        logging.info(f"[Bot] Logged in as {self.user.name} (ready!)")
         # Start queue worker
         asyncio.create_task(self.queue_worker())
 
@@ -132,7 +140,7 @@ class SpellBot(commands.Bot):
             try:
                 await coro_func()
             except Exception as e:
-                print(f"[Bot] Error in queue worker: {e}")
+                logging.error(f"[Bot] Error in queue worker: {e}")
 
     async def event_message(self, message):
         if message.echo or message.author is None:
@@ -152,7 +160,7 @@ class SpellBot(commands.Bot):
 # ---------------- Run Flask in Thread ----------------
 def start_flask():
     port = int(os.environ.get("PORT", 5000))
-    print(f"[Flask] Starting server on 0.0.0.0:{port}")
+    logging.info(f"[Flask] Starting server on 0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ---------------- Run ----------------
