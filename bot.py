@@ -135,7 +135,7 @@ class SpellBot(commands.Bot):
         )
 
     async def event_ready(self):
-        logging.info(f"[Bot] Logged in as {self.user.name} (ready!)")
+        logging.info(f"[Bot] Logged in!")
 
     async def event_message(self, message):
         if message.echo or message.author is None:
